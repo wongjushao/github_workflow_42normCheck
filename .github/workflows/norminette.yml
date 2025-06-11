@@ -18,18 +18,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout the repository code
       - name: Checkout Repository
         uses: actions/checkout@v4
-
+  
+      # Set up Python environment
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      # Install the Norminette tool
       - name: Install Norminette
         run: |
           pip install norminette
 
+      # Run Norminette and save the output to a report file
       - name: Run Norminette
         id: norminette
         run: |
@@ -41,18 +45,24 @@ jobs:
             echo "✅ Norminette passed"
           fi
 
+      # Highlight Norminette errors using GitHub annotations
       - name: Annotate Norminette Errors
         if: ${{ failure() }}
         run: |
+          file=""
           while IFS= read -r line; do
-            if echo "$line" | grep -qE "^\.\/.*:[0-9]+:"; then
-              file=$(echo "$line" | cut -d: -f1 | sed 's|^\./||')
-              lineno=$(echo "$line" | cut -d: -f2)
-              msg=$(echo "$line" | cut -d: -f3- | xargs)
-              echo "::error file=$file,line=$lineno::${msg}"
+            if [[ "$line" == *.c:* ]]; then
+              file=$(echo "$line" | cut -d: -f1)
+            elif [[ "$line" == Error:* ]]; then
+              lineno=$(echo "$line" | grep -oP 'line:\s*\K[0-9]+')
+              msg=$(echo "$line" | cut -d')' -f2- | xargs)
+              if [[ -n "$file" && -n "$lineno" ]]; then
+                echo "::error file=$file,line=$lineno::$msg"
+              fi
             fi
           done < norminette_report.txt
-  
+
+      # Upload the norminette error report as an artifact
       - name: Upload Norminette Report
         if: always()
         uses: actions/upload-artifact@v4
@@ -60,13 +70,15 @@ jobs:
           name: norminette-report
           path: norminette_report.txt
 
+      # Read the report into a GitHub Actions environment variable
       - name: Read Norminette Report to ENV
         if: ${{ failure() && github.event_name == 'pull_request' }}
         run: |
           echo "REPORT<<EOF" >> $GITHUB_ENV
           cat norminette_report.txt >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-      
+
+      # Comment the norminette errors on the pull request
       - name: Comment PR with error
         if: ${{ failure() && github.event_name == 'pull_request' }}
         uses: peter-evans/create-or-update-comment@v3
@@ -74,10 +86,9 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
             ❌ Norminette fail：
-      
+
             ```
             ${{ env.REPORT }}
             ```
-      
-          edit-mode: replace
 
+          edit-mode: replace

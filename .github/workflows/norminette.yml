@@ -1,0 +1,83 @@
+# .github/workflows/norminette.yml
+name: Norminette Check
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  norminette-check:
+    name: Run Norminette
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Norminette
+        run: |
+          pip install norminette
+
+      - name: Run Norminette
+        id: norminette
+        run: |
+          echo "🧪 Running norminette..."
+          if norminette | tee norminette_report.txt | grep -q 'Error:'; then
+            echo "❌ Norminette found errors"
+            exit 1
+          else
+            echo "✅ Norminette passed"
+          fi
+
+      - name: Annotate Norminette Errors
+        if: ${{ failure() }}
+        run: |
+          while IFS= read -r line; do
+            if echo "$line" | grep -qE "^\.\/.*:[0-9]+:"; then
+              file=$(echo "$line" | cut -d: -f1 | sed 's|^\./||')
+              lineno=$(echo "$line" | cut -d: -f2)
+              msg=$(echo "$line" | cut -d: -f3- | xargs)
+              echo "::error file=$file,line=$lineno::${msg}"
+            fi
+          done < norminette_report.txt
+  
+      - name: Upload Norminette Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: norminette-report
+          path: norminette_report.txt
+
+      - name: Read Norminette Report to ENV
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        run: |
+          echo "REPORT<<EOF" >> $GITHUB_ENV
+          cat norminette_report.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+      
+      - name: Comment PR with error
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ❌ Norminette fail：
+      
+            ```
+            ${{ env.REPORT }}
+            ```
+      
+          edit-mode: replace
+
